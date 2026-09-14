@@ -6,6 +6,15 @@ An [MCP](https://modelcontextprotocol.io) server exposing GitHub repository data
 commits, issues, contributor activity — as typed, callable tools that any
 MCP-compatible LLM client (Claude Desktop, Claude Code, others) can discover and use.
 
+## Demo
+
+![Claude Desktop discovering and calling this server's tools](demo.gif)
+
+Claude Desktop asking about a real repo — it discovers `recent_commits`,
+requests approval to call it with the right arguments, then does the same for
+`codebase_insights` on a follow-up question. No custom integration code, no
+prior knowledge of this API — just the tool descriptions this server advertises.
+
 ## Architecture
 
 ```mermaid
