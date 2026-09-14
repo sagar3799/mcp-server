@@ -13,7 +13,9 @@ MCP-compatible LLM client (Claude Desktop, Claude Code, others) can discover and
 | `open_issues(owner, repo, count=10)` | Open issue titles, labels, age in days |
 
 All three work against any public GitHub repo with **zero setup** — no token,
-no auth, no config beyond pointing a client at this server.
+no auth, no config beyond pointing a client at this server. Responses are
+Pydantic-validated (`RepoSummary`, `Commit`, `Issue`) and cached in-memory for
+5 minutes, so repeated identical calls don't re-hit the GitHub API.
 
 ## Setup
 

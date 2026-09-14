@@ -13,6 +13,9 @@ from datetime import datetime, timezone
 
 import requests
 
+from cache import cached
+from schemas import Commit, Issue, RepoSummary
+
 GITHUB_API_BASE = "https://api.github.com"
 
 
@@ -43,6 +46,13 @@ def _get(path: str, params: dict | None = None) -> requests.Response:
     if response.status_code == 404:
         raise RepoNotFoundError(f"Not found: {path}. Check the owner/repo spelling and that it's public.")
 
+    if response.status_code in (403, 429) and "Retry-After" in response.headers:
+        minutes = max(1, round(int(response.headers["Retry-After"]) / 60))
+        raise RateLimitError(
+            f"GitHub rate limit hit, resets in {minutes} minute(s). "
+            "Set GITHUB_TOKEN for a higher limit (5,000/hour vs 60/hour)."
+        )
+
     if response.status_code == 403 and response.headers.get("X-RateLimit-Remaining") == "0":
         reset_ts = int(response.headers.get("X-RateLimit-Reset", 0))
         minutes = max(0, round((reset_ts - time.time()) / 60))
@@ -55,41 +65,44 @@ def _get(path: str, params: dict | None = None) -> requests.Response:
     return response
 
 
-def get_repo_summary(owner: str, repo: str) -> dict:
+@cached
+def get_repo_summary(owner: str, repo: str) -> RepoSummary:
     """Fetch stars, language breakdown, description, and last commit date."""
     repo_data = _get(f"/repos/{owner}/{repo}").json()
     languages = _get(f"/repos/{owner}/{repo}/languages").json()
 
-    return {
-        "full_name": repo_data["full_name"],
-        "description": repo_data.get("description"),
-        "stars": repo_data["stargazers_count"],
-        "forks": repo_data["forks_count"],
-        "open_issues": repo_data["open_issues_count"],
-        "default_branch": repo_data["default_branch"],
-        "languages": languages,
-        "last_commit_date": repo_data.get("pushed_at"),
-        "url": repo_data["html_url"],
-    }
+    return RepoSummary(
+        full_name=repo_data["full_name"],
+        description=repo_data.get("description"),
+        stars=repo_data["stargazers_count"],
+        forks=repo_data["forks_count"],
+        open_issues=repo_data["open_issues_count"],
+        default_branch=repo_data["default_branch"],
+        languages=languages,
+        last_commit_date=repo_data.get("pushed_at"),
+        url=repo_data["html_url"],
+    )
 
 
-def list_recent_commits(owner: str, repo: str, count: int = 10) -> list[dict]:
+@cached
+def list_recent_commits(owner: str, repo: str, count: int = 10) -> list[Commit]:
     """List the most recent commits with author and date."""
     commits = _get(f"/repos/{owner}/{repo}/commits", params={"per_page": count}).json()
 
     return [
-        {
-            "sha": commit["sha"][:7],
-            "message": commit["commit"]["message"].split("\n")[0],
-            "author": commit["commit"]["author"]["name"],
-            "date": commit["commit"]["author"]["date"],
-            "url": commit["html_url"],
-        }
+        Commit(
+            sha=commit["sha"][:7],
+            message=commit["commit"]["message"].split("\n")[0],
+            author=commit["commit"]["author"]["name"],
+            date=commit["commit"]["author"]["date"],
+            url=commit["html_url"],
+        )
         for commit in commits
     ]
 
 
-def list_open_issues(owner: str, repo: str, count: int = 10) -> list[dict]:
+@cached
+def list_open_issues(owner: str, repo: str, count: int = 10) -> list[Issue]:
     """List open issues with labels and age in days. Excludes pull requests."""
     issues = _get(
         f"/repos/{owner}/{repo}/issues",
@@ -103,13 +116,13 @@ def list_open_issues(owner: str, repo: str, count: int = 10) -> list[dict]:
             continue
         created = datetime.fromisoformat(issue["created_at"].replace("Z", "+00:00"))
         result.append(
-            {
-                "number": issue["number"],
-                "title": issue["title"],
-                "labels": [label["name"] for label in issue["labels"]],
-                "age_days": (now - created).days,
-                "url": issue["html_url"],
-            }
+            Issue(
+                number=issue["number"],
+                title=issue["title"],
+                labels=[label["name"] for label in issue["labels"]],
+                age_days=(now - created).days,
+                url=issue["html_url"],
+            )
         )
         if len(result) >= count:
             break

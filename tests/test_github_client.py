@@ -4,9 +4,11 @@ import sys
 from pathlib import Path
 
 import pytest
+import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from cache import repo_cache
 from github_client import (
     RateLimitError,
     RepoNotFoundError,
@@ -14,6 +16,13 @@ from github_client import (
     list_open_issues,
     list_recent_commits,
 )
+
+
+@pytest.fixture(autouse=True)
+def clear_cache():
+    repo_cache.clear()
+    yield
+    repo_cache.clear()
 
 
 class FakeResponse:
@@ -27,7 +36,7 @@ class FakeResponse:
 
     def raise_for_status(self):
         if self.status_code >= 400:
-            raise Exception(f"HTTP {self.status_code}")
+            raise requests.HTTPError(f"HTTP {self.status_code}")
 
 
 def test_get_repo_summary_success(mocker):
@@ -48,10 +57,10 @@ def test_get_repo_summary_success(mocker):
 
     result = get_repo_summary("octocat", "hello-world")
 
-    assert result["full_name"] == "octocat/hello-world"
-    assert result["stars"] == 42
-    assert result["languages"] == {"Python": 1000, "JavaScript": 200}
-    assert result["last_commit_date"] == "2026-01-01T00:00:00Z"
+    assert result.full_name == "octocat/hello-world"
+    assert result.stars == 42
+    assert result.languages == {"Python": 1000, "JavaScript": 200}
+    assert result.last_commit_date == "2026-01-01T00:00:00Z"
 
 
 def test_get_repo_summary_not_found(mocker):
@@ -61,7 +70,7 @@ def test_get_repo_summary_not_found(mocker):
         get_repo_summary("octocat", "does-not-exist")
 
 
-def test_get_repo_summary_rate_limited(mocker):
+def test_get_repo_summary_rate_limited_primary(mocker):
     response = FakeResponse(
         status_code=403,
         headers={"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "9999999999"},
@@ -70,6 +79,37 @@ def test_get_repo_summary_rate_limited(mocker):
 
     with pytest.raises(RateLimitError, match="rate limit"):
         get_repo_summary("octocat", "hello-world")
+
+
+def test_get_repo_summary_rate_limited_secondary_retry_after(mocker):
+    response = FakeResponse(status_code=403, headers={"Retry-After": "120"})
+    mocker.patch("requests.get", return_value=response)
+
+    with pytest.raises(RateLimitError, match="2 minute"):
+        get_repo_summary("octocat", "hello-world")
+
+
+def test_get_repo_summary_caches_repeated_calls(mocker):
+    repo_response = FakeResponse(
+        json_data={
+            "full_name": "octocat/hello-world",
+            "description": None,
+            "stargazers_count": 1,
+            "forks_count": 0,
+            "open_issues_count": 0,
+            "default_branch": "main",
+            "pushed_at": "2026-01-01T00:00:00Z",
+            "html_url": "https://github.com/octocat/hello-world",
+        }
+    )
+    languages_response = FakeResponse(json_data={"Python": 1000})
+    mock_get = mocker.patch("requests.get", side_effect=[repo_response, languages_response])
+
+    first = get_repo_summary("octocat", "hello-world")
+    second = get_repo_summary("octocat", "hello-world")
+
+    assert first == second
+    assert mock_get.call_count == 2  # repo + languages, once — not four times
 
 
 def test_list_recent_commits(mocker):
@@ -90,9 +130,9 @@ def test_list_recent_commits(mocker):
     result = list_recent_commits("octocat", "hello-world", count=1)
 
     assert len(result) == 1
-    assert result[0]["sha"] == "abc1234"
-    assert result[0]["message"] == "Fix bug"
-    assert result[0]["author"] == "Alice"
+    assert result[0].sha == "abc1234"
+    assert result[0].message == "Fix bug"
+    assert result[0].author == "Alice"
 
 
 def test_list_open_issues_excludes_pull_requests(mocker):
@@ -120,6 +160,6 @@ def test_list_open_issues_excludes_pull_requests(mocker):
     result = list_open_issues("octocat", "hello-world", count=10)
 
     assert len(result) == 1
-    assert result[0]["number"] == 1
-    assert result[0]["labels"] == ["bug"]
-    assert result[0]["age_days"] > 0
+    assert result[0].number == 1
+    assert result[0].labels == ["bug"]
+    assert result[0].age_days > 0

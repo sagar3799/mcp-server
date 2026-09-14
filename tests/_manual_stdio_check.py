@@ -20,28 +20,27 @@ async def main():
         args=[str(SRC_DIR / "server.py")],
         cwd=str(SRC_DIR),
     )
-    async with stdio_client(params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
+    async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
 
-            tools = await session.list_tools()
-            print("Discovered tools:")
-            for t in tools.tools:
-                print(f"  - {t.name}: {t.description}")
+        tools = await session.list_tools()
+        print("Discovered tools:")
+        for t in tools.tools:
+            print(f"  - {t.name}: {t.description}")
 
-            print("\nCalling repo_summary(sagar3799, langgraph-report-agent)...")
-            result = await session.call_tool(
-                "repo_summary", {"owner": "sagar3799", "repo": "langgraph-report-agent"}
-            )
-            print("is_error:", result.is_error)
-            print("content:", [c.text for c in result.content])
+        print("\nCalling repo_summary(sagar3799, langgraph-report-agent)...")
+        result = await session.call_tool(
+            "repo_summary", {"owner": "sagar3799", "repo": "langgraph-report-agent"}
+        )
+        print("is_error:", result.is_error)
+        print("content:", [c.text for c in result.content])
 
-            print("\nCalling repo_summary on a nonexistent repo (checking clean error)...")
-            result = await session.call_tool(
-                "repo_summary", {"owner": "sagar3799", "repo": "definitely-does-not-exist-xyz"}
-            )
-            print("is_error:", result.is_error)
-            print("content:", [c.text for c in result.content])
+        print("\nCalling repo_summary on a nonexistent repo (checking clean error)...")
+        result = await session.call_tool(
+            "repo_summary", {"owner": "sagar3799", "repo": "definitely-does-not-exist-xyz"}
+        )
+        print("is_error:", result.is_error)
+        print("content:", [c.text for c in result.content])
 
 
 if __name__ == "__main__":
