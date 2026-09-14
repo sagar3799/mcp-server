@@ -42,6 +42,17 @@ async def main():
         print("is_error:", result.is_error)
         print("content:", [c.text for c in result.content])
 
+        for tool_name, args in [
+            ("contributor_stats", {"owner": "sagar3799", "repo": "langgraph-report-agent", "count": 3}),
+            ("codebase_insights", {"owner": "sagar3799", "repo": "langgraph-report-agent"}),
+            ("commit_frequency", {"owner": "sagar3799", "repo": "langgraph-report-agent", "weeks": 4}),
+            ("search_codebase", {"owner": "sagar3799", "repo": "langgraph-report-agent", "query": "def"}),
+        ]:
+            print(f"\nCalling {tool_name}({args})...")
+            result = await session.call_tool(tool_name, args)
+            print("is_error:", result.is_error)
+            print("content:", [c.text for c in result.content])
+
 
 if __name__ == "__main__":
     asyncio.run(main())

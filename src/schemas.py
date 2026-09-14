@@ -29,3 +29,26 @@ class Issue(BaseModel):
     labels: list[str]
     age_days: int
     url: str
+
+
+class Contributor(BaseModel):
+    login: str
+    contributions: int
+    profile_url: str
+
+
+class CodebaseInsights(BaseModel):
+    size_kb: int
+    languages: dict[str, float]  # percentage of codebase, not raw bytes
+
+
+class WeeklyCommitCount(BaseModel):
+    week_start: str
+    commit_count: int
+
+
+class CodeSearchResult(BaseModel):
+    path: str
+    url: str
+    snippet: str | None
+    score: float

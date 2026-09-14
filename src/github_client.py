@@ -14,7 +14,15 @@ from datetime import datetime, timezone
 import requests
 
 from cache import cached
-from schemas import Commit, Issue, RepoSummary
+from schemas import (
+    CodebaseInsights,
+    CodeSearchResult,
+    Commit,
+    Contributor,
+    Issue,
+    RepoSummary,
+    WeeklyCommitCount,
+)
 
 GITHUB_API_BASE = "https://api.github.com"
 
@@ -31,6 +39,10 @@ class RateLimitError(GitHubClientError):
     pass
 
 
+class CodeSearchAuthRequiredError(GitHubClientError):
+    pass
+
+
 def _headers() -> dict:
     headers = {"Accept": "application/vnd.github+json"}
     token = os.environ.get("GITHUB_TOKEN")
@@ -39,9 +51,12 @@ def _headers() -> dict:
     return headers
 
 
-def _get(path: str, params: dict | None = None) -> requests.Response:
+def _get(path: str, params: dict | None = None, extra_headers: dict | None = None) -> requests.Response:
     url = f"{GITHUB_API_BASE}{path}"
-    response = requests.get(url, headers=_headers(), params=params, timeout=10)
+    headers = _headers()
+    if extra_headers:
+        headers.update(extra_headers)
+    response = requests.get(url, headers=headers, params=params, timeout=10)
 
     if response.status_code == 404:
         raise RepoNotFoundError(f"Not found: {path}. Check the owner/repo spelling and that it's public.")
@@ -128,3 +143,86 @@ def list_open_issues(owner: str, repo: str, count: int = 10) -> list[Issue]:
             break
 
     return result
+
+
+@cached
+def get_contributor_stats(owner: str, repo: str, count: int = 10) -> list[Contributor]:
+    """Top contributors by commit count on the default branch."""
+    contributors = _get(f"/repos/{owner}/{repo}/contributors", params={"per_page": count}).json()
+
+    return [
+        Contributor(
+            login=c["login"],
+            contributions=c["contributions"],
+            profile_url=c["html_url"],
+        )
+        for c in contributors
+    ]
+
+
+@cached
+def get_codebase_insights(owner: str, repo: str) -> CodebaseInsights:
+    """Language breakdown as percentages of the codebase, plus total repo size in KB."""
+    repo_data = _get(f"/repos/{owner}/{repo}").json()
+    languages = _get(f"/repos/{owner}/{repo}/languages").json()
+
+    total_bytes = sum(languages.values()) or 1
+    percentages = {lang: round(count / total_bytes * 100, 1) for lang, count in languages.items()}
+
+    return CodebaseInsights(size_kb=repo_data["size"], languages=percentages)
+
+
+@cached
+def get_commit_frequency(owner: str, repo: str, weeks: int = 12) -> list[WeeklyCommitCount]:
+    """Weekly commit counts for the last `weeks` weeks (max 52). Pure counting —
+    no keyword-based categorization, no LLM call involved."""
+    response = _get(f"/repos/{owner}/{repo}/stats/commit_activity")
+    if response.status_code == 202:
+        raise GitHubClientError(
+            "GitHub is still computing commit statistics for this repo — try again in a few seconds."
+        )
+
+    weekly = response.json()
+    weeks = max(1, min(weeks, 52))
+
+    return [
+        WeeklyCommitCount(
+            week_start=datetime.fromtimestamp(entry["week"], tz=timezone.utc).date().isoformat(),
+            commit_count=entry["total"],
+        )
+        for entry in weekly[-weeks:]
+    ]
+
+
+@cached
+def search_codebase(owner: str, repo: str, query: str, count: int = 10) -> list[CodeSearchResult]:
+    """Search code within a repo's default branch. Requires GITHUB_TOKEN — GitHub's
+    code search sits in its own, much stricter rate-limit bucket that unauthenticated
+    requests can't use reliably. Only indexes the default branch and excludes some
+    large files and forks, so an empty result doesn't necessarily mean the code
+    doesn't exist elsewhere in the repo."""
+    if not os.environ.get("GITHUB_TOKEN"):
+        raise CodeSearchAuthRequiredError(
+            "search_codebase requires GITHUB_TOKEN. GitHub's code search has its own, "
+            "much stricter rate limit that doesn't work reliably unauthenticated."
+        )
+
+    response = _get(
+        "/search/code",
+        params={"q": f"{query} repo:{owner}/{repo}", "per_page": count},
+        extra_headers={"Accept": "application/vnd.github.text-match+json"},
+    )
+
+    results = []
+    for item in response.json().get("items", []):
+        matches = item.get("text_matches") or []
+        results.append(
+            CodeSearchResult(
+                path=item["path"],
+                url=item["html_url"],
+                snippet=matches[0]["fragment"] if matches else None,
+                score=item.get("score", 0.0),
+            )
+        )
+
+    return results
