@@ -1,8 +1,23 @@
 # mcp-github-server
 
+[![CI](https://github.com/sagar3799/mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/sagar3799/mcp-server/actions/workflows/ci.yml)
+
 An [MCP](https://modelcontextprotocol.io) server exposing GitHub repository data —
 commits, issues, contributor activity — as typed, callable tools that any
 MCP-compatible LLM client (Claude Desktop, Claude Code, others) can discover and use.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    A[Claude Desktop<br/>or any MCP client] -- "MCP over stdio" --> B[mcp-github-server]
+    B -- "GitHub REST API" --> C[(GitHub)]
+    C -- JSON --> B
+    B -- "typed, validated tool results" --> A
+```
+
+The client launches `server.py` as a local subprocess and talks to it over
+stdio using the MCP protocol — no network server to run or expose.
 
 ## Tools
 
